@@ -1,0 +1,1 @@
+Move here the jpg_img! (dont mexas nos .csv!)
