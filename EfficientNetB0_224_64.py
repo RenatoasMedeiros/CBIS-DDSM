@@ -309,6 +309,8 @@ def create_tf_dataset(image_paths, labels, batch_size, augment=False):
     dataset = dataset.map(lambda img, label: (tf.cast(img, tf.float32), label),
                           num_parallel_calls=tf.data.AUTOTUNE)
     
+    dataset = dataset.map(lambda img, label: (img, tf.expand_dims(label, axis=-1)),
+                          num_parallel_calls=tf.data.AUTOTUNE)
     # Batch before augmentation
     dataset = dataset.batch(batch_size)
 
@@ -438,10 +440,15 @@ optimizer = Adam(learning_rate=LEARNING_RATE)
 
 # MODIFIED: Adjust loss based on number of classes
 if len(target_names) <= 2: # Binary classification (or single class if an error, but usually benign/malignant)
+    print("Binary classification")
     loss = tf.keras.losses.BinaryCrossentropy()
     # For binary, ensure 'accuracy' is suitable. AUC, Precision, Recall are fine.
     metrics = ['accuracy', tf.keras.metrics.AUC(name='auc'),
-               tf.keras.metrics.Precision(name='precision'), tf.keras.metrics.Recall(name='recall')]
+               tf.keras.metrics.Precision(name='precision'), 
+               tf.keras.metrics.Recall(name='recall'), 
+               tf.keras.metrics.F1Score(name='f1_score'),
+               tf.keras.metrics.FalseNegatives(name='false_negatives'),
+               tf.keras.metrics.FalsePositives(name='false_positives')]
 else: # Multiclass classification
     loss = tf.keras.losses.SparseCategoricalCrossentropy() # Assuming y_train, etc., are integer labels
     metrics = ['accuracy', tf.keras.metrics.AUC(name='auc')] # AUC might need multi_label=True or specific setup for multiclass
@@ -463,8 +470,8 @@ else:
 
     checkpoint_filepath_head = os.path.join(OUTPUT_DIR, 'best_model_head_only.keras')
     callbacks_head = [
-        ModelCheckpoint(filepath=checkpoint_filepath_head, save_weights_only=False, monitor='val_auc', mode='max', save_best_only=True),
-        EarlyStopping(monitor='val_auc', patience=PATIENCE_EARLY_STOPPING, mode='max', restore_best_weights=True),
+        ModelCheckpoint(filepath=checkpoint_filepath_head, save_weights_only=False, monitor='val_accuracy', mode='max', save_best_only=True),
+        EarlyStopping(monitor='val_accuracy', patience=PATIENCE_EARLY_STOPPING, mode='max', restore_best_weights=True),
         ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=PATIENCE_REDUCE_LR, min_lr=1e-7, mode='min')
     ]
     history_head = model.fit(
@@ -518,8 +525,8 @@ else:
 
     checkpoint_filepath_finetune = os.path.join(OUTPUT_DIR, 'best_model_finetuned.keras')
     callbacks_finetune = [
-        ModelCheckpoint(filepath=checkpoint_filepath_finetune, save_weights_only=False, monitor='val_auc', mode='max', save_best_only=True),
-        EarlyStopping(monitor='val_auc', patience=PATIENCE_EARLY_STOPPING_FT, mode='max', restore_best_weights=True),
+        ModelCheckpoint(filepath=checkpoint_filepath_finetune, save_weights_only=False, monitor='val_accuracy', mode='max', save_best_only=True),
+        EarlyStopping(monitor='val_accuracy', patience=PATIENCE_EARLY_STOPPING_FT, mode='max', restore_best_weights=True),
         ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=PATIENCE_REDUCE_LR_FT, min_lr=1e-8, mode='min')
     ]
 
@@ -556,23 +563,36 @@ if test_samples_effective == 0:
     test_auc = 0
 else:
     results = model.evaluate(test_dataset, verbose=1)
-    if len(results) >= 5:  # Ensure there are enough metrics
+    
+    # The F1-score is at index 5, so we need at least 6 items in results
+    print(f"results: {results}")
+    if len(results) >= 6:
         final_loss = results[0]
-        final_acc = results[1]  # Accuracy
-        final_auc = results[2]  # AUC
-        final_precision = results[3]  # Precision
-        final_recall = results[4]  # Recall
+        final_acc = results[1]
+        final_auc = results[2]
+        final_precision = results[3]
+        final_recall = results[4]
+        final_f1_score = results[5] # <-- Extract the F1-score here
+
         print(f"Final Loss: {final_loss}")
         print(f"Final Accuracy: {final_acc}")
         print(f"Final AUC: {final_auc}")
         print(f"Final Precision: {final_precision}")
         print(f"Final Recall: {final_recall}")
-        history_plot_filename = f"training_history_Acc{final_acc:.3f}_AUC{final_auc:.3f}.png"
-    else:
-        print("Error: Not enough metrics returned from model.evaluate")
+        print(f"Final F1-Score: {final_f1_score}") # <-- Print it for confirmation
 
-    print("Number of results:", len(results))
-    print("Results:", results)
+        # MODIFIED: Update the filename to include loss and F1-score
+        history_plot_filename = f"training_history_Loss{final_loss:.3f}_Acc{final_acc:.3f}_AUC{final_auc:.3f}_F1{final_f1_score:.3f}_Loss{final_loss}.png"
+    else:
+        print("Error: Not enough metrics returned from model.evaluate to extract F1-score.")
+        # Fallback filename if F1-score isn't available
+        final_acc = results[1]
+        final_auc = results[2]
+        history_plot_filename = f"training_history_Acc{final_acc:.3f}_AUC{final_auc:.3f}.png"
+
+
+    print("\nFull evaluation results:", results)
+    print("Model metrics names:", model.metrics_names)
     y_pred_proba = model.predict(test_dataset)
 
     # Extract true labels correctly, regardless of whether test_dataset was batched
@@ -613,11 +633,13 @@ else:
         plt.show()
 
 
-# Plot Training History (combined)
-# Ensure histories exist before trying to plot
 acc, val_acc, loss_hist, val_loss_hist, auc, val_auc = [], [], [], [], [], []
-epochs_range_head_len = 0
+f1, val_f1 = [], []
+false_positives, val_false_positives = [], []
+false_negatives, val_false_negatives = [], []
 
+epochs_range_head_len = 0
+print(f"history_head.history: {history_head.history}")
 if 'history_head' in locals() and hasattr(history_head, 'history'):
     acc.extend(history_head.history.get('accuracy', []))
     val_acc.extend(history_head.history.get('val_accuracy', []))
@@ -626,6 +648,12 @@ if 'history_head' in locals() and hasattr(history_head, 'history'):
     auc.extend(history_head.history.get('auc', []))
     val_auc.extend(history_head.history.get('val_auc', []))
     epochs_range_head_len = len(history_head.history.get('accuracy', []))
+    f1.extend(history_head.history.get('f1_score', []))
+    val_f1.extend(history_head.history.get('val_f1_score', []))
+    false_positives.extend(history_head.history.get('false_positives', []))
+    val_false_positives.extend(history_head.history.get('val_false_positives', []))
+    false_negatives.extend(history_head.history.get('false_negatives', []))
+    val_false_negatives.extend(history_head.history.get('val_false_negatives', []))
 
 if 'history_fine_tune' in locals() and hasattr(history_fine_tune, 'history'):
     acc.extend(history_fine_tune.history.get('accuracy', []))
@@ -634,36 +662,42 @@ if 'history_fine_tune' in locals() and hasattr(history_fine_tune, 'history'):
     val_loss_hist.extend(history_fine_tune.history.get('val_loss', []))
     auc.extend(history_fine_tune.history.get('auc', []))
     val_auc.extend(history_fine_tune.history.get('val_auc', []))
+    f1.extend(history_fine_tune.history.get('f1_score', []))
+    val_f1.extend(history_fine_tune.history.get('val_f1_score', []))
+    false_positives.extend(history_fine_tune.history.get('false_positives', []))
+    val_false_positives.extend(history_fine_tune.history.get('val_false_positives', []))
+    false_negatives.extend(history_fine_tune.history.get('false_negatives', []))
+    val_false_negatives.extend(history_fine_tune.history.get('val_false_negatives', []))
 
 epochs_range_total = range(len(acc))
 
 if epochs_range_total: # Only plot if there's history
-    plt.figure(figsize=(20, 8)) # Made figure wider
+    plt.figure(figsize=(24, 16)) # Made figure wider
     
-    # Plot Accuracy
-    plt.subplot(1, 3, 1)
+    # Plot 1: Accuracy
+    plt.subplot(2, 3, 1)
     plt.plot(epochs_range_total, acc, label='Training Accuracy')
     plt.plot(epochs_range_total, val_acc, label='Validation Accuracy')
     if epochs_range_head_len > 0 and epochs_range_head_len < len(epochs_range_total):
-        plt.axvline(x=epochs_range_head_len -1 , color='gray', linestyle='--', label='Start Fine-tuning')
+        plt.axvline(x=epochs_range_head_len-1, color='gray', linestyle='--', label='Start Fine-tuning')
     plt.legend(loc='lower right')
     plt.title('Training and Validation Accuracy')
     plt.xlabel('Epochs')
     plt.ylabel('Accuracy')
 
-    # Plot Loss
-    plt.subplot(1, 3, 2)
+    # Plot 2: Loss
+    plt.subplot(2, 3, 2)
     plt.plot(epochs_range_total, loss_hist, label='Training Loss')
     plt.plot(epochs_range_total, val_loss_hist, label='Validation Loss')
     if epochs_range_head_len > 0 and epochs_range_head_len < len(epochs_range_total):
-        plt.axvline(x=epochs_range_head_len -1, color='gray', linestyle='--', label='Start Fine-tuning')
+        plt.axvline(x=epochs_range_head_len-1, color='gray', linestyle='--', label='Start Fine-tuning')
     plt.legend(loc='upper right')
     plt.title('Training and Validation Loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
 
-    # Plot AUC
-    plt.subplot(1, 3, 3)
+    # Plot 3: AUC
+    plt.subplot(2, 3, 3)
     plt.plot(epochs_range_total, auc, label='Training AUC')
     plt.plot(epochs_range_total, val_auc, label='Validation AUC')
     if epochs_range_head_len > 0 and epochs_range_head_len < len(epochs_range_total):
@@ -673,14 +707,49 @@ if epochs_range_total: # Only plot if there's history
     plt.xlabel('Epochs')
     plt.ylabel('AUC')
 
+    # Plot 4: F1-Score
+    plt.subplot(2, 3, 4)
+    plt.plot(epochs_range_total, f1, label='Training F1')
+    plt.plot(epochs_range_total, val_f1, label='Validation F1')
+    if epochs_range_head_len > 0 and epochs_range_head_len < len(epochs_range_total):
+        plt.axvline(x=epochs_range_head_len-1, color='gray', linestyle='--', label='Start Fine-tuning')
+    plt.legend(loc='lower right')
+    plt.title('Training and Validation F1-Score')
+    plt.xlabel('Epochs')
+    plt.ylabel('F1-Score')
+
+    # Plot 5: False Positives
+    plt.subplot(2, 3, 5)
+    plt.plot(epochs_range_total, false_positives, label='Training False Positives')
+    plt.plot(epochs_range_total, val_false_positives, label='Validation False Positives')
+    if epochs_range_head_len > 0 and epochs_range_head_len < len(epochs_range_total):
+        plt.axvline(x=epochs_range_head_len-1, color='gray', linestyle='--', label='Start Fine-tuning')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation False Positives')
+    plt.xlabel('Epochs')
+    plt.ylabel('Count')
+    plt.yscale('log')  # Log scale for better visualization
+
+    # Plot 6: False Negatives
+    plt.subplot(2, 3, 6)
+    plt.plot(epochs_range_total, false_negatives, label='Training False Negatives')
+    plt.plot(epochs_range_total, val_false_negatives, label='Validation False Negatives')
+    if epochs_range_head_len > 0 and epochs_range_head_len < len(epochs_range_total):
+        plt.axvline(x=epochs_range_head_len-1, color='gray', linestyle='--', label='Start Fine-tuning')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation False Negatives')
+    plt.xlabel('Epochs')
+    plt.ylabel('Count')
+    plt.yscale('log')  # Log scale for better visualization
+
     plt.tight_layout()
     
 
-    print("Available metrics names:", model.metrics_names)
+    #print("Available metrics names:", model.metrics_names)
     # Use the metrics already extracted in the evaluation section
     final_acc = results[1]  # Accuracy
     final_auc = results[2]  # AUC
-    history_plot_filename = f"training_history_Acc{final_acc:.3f}_AUC{final_auc:.3f}.png"
+    history_plot_filename = f"training_history{final_acc:.3f}_AUC{final_auc:.3f}_F1{final_f1_score:.3f}_Loss{final_loss}.png"
     history_save_path = os.path.join(OUTPUT_DIR, history_plot_filename)
     plt.savefig(history_save_path)
     print(f"Training history plot saved to {history_save_path}")
