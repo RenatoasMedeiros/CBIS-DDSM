@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breast Cancer Detection AI</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Simple spinner animation */
+        .loader {
+            border-top-color: #3498db;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @-webkit-keyframes spinner {
+            0% { -webkit-transform: rotate(0deg); }
+            100% { -webkit-transform: rotate(360deg); }
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Style for the file input button */
+        .file-input-button {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-4xl mx-auto">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white">Breast Cancer Detection AI</h1>
+            <p class="text-md text-gray-600 dark:text-gray-400 mt-2">Upload a mammogram image to get an AI-powered analysis.</p>
+        </header>
+
+        <main class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 md:p-8">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                
+                <!-- Left Column: Upload & Preview -->
+                <div class="flex flex-col items-center justify-center space-y-6">
+                    <h2 class="text-xl font-semibold text-center text-gray-700 dark:text-gray-300">1. Upload Image</h2>
+                    
+                    <!-- Image Preview Area -->
+                    <div id="imagePreviewContainer" class="w-full h-64 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center border-2 border-dashed border-gray-300 dark:border-gray-600 overflow-hidden">
+                        <img id="imagePreview" src="" alt="Image Preview" class="hidden w-full h-full object-contain"/>
+                        <span id="previewText" class="text-gray-500 dark:text-gray-400">Image preview will appear here</span>
+                    </div>
+
+                    <!-- File Input and Predict Button -->
+                    <div class="w-full space-y-4">
+                         <input type="file" id="imageUpload" accept="image/*" class="hidden">
+                         <label for="imageUpload" class="file-input-button w-full text-center block bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300">
+                             Choose an Image
+                         </label>
+                         <button id="predictBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed">
+                             Analyze Image
+                         </button>
+                    </div>
+                </div>
+
+                <!-- Right Column: Results -->
+                <div class="flex flex-col items-center justify-center space-y-6">
+                    <h2 class="text-xl font-semibold text-center text-gray-700 dark:text-gray-300">2. Analysis Results</h2>
+
+                    <!-- Results Display Area -->
+                    <div id="resultsContainer" class="w-full h-64 bg-gray-100 dark:bg-gray-700 rounded-lg flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-300 dark:border-gray-600">
+                        <!-- Loader -->
+                        <div id="loader" class="hidden loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mb-4"></div>
+                        <p id="loaderText" class="hidden text-gray-500 dark:text-gray-400">Analyzing, please wait...</p>
+                        
+                        <!-- Initial Text -->
+                        <span id="resultsPlaceholder" class="text-gray-500 dark:text-gray-400 text-center">Results will be displayed here.</span>
+
+                        <!-- Error Message -->
+                        <div id="errorMessage" class="hidden text-red-500 dark:text-red-400 text-center font-medium"></div>
+
+                        <!-- Results Content -->
+                        <div id="resultsContent" class="hidden w-full h-full flex flex-col items-center justify-center">
+                             <div id="probabilityContainer" class="w-full p-3 mb-4 rounded-lg text-center font-semibold text-lg">
+                                 <p id="probabilityText"></p>
+                             </div>
+                             <div class="flex-grow w-full rounded-md overflow-hidden flex items-center justify-center">
+                                <img id="annotatedImage" src="" alt="Annotated Image" class="hidden w-full h-full object-contain"/>
+                                <p id="noDetectionText" classs="hidden text-gray-500 dark:text-gray-400">Detection model not triggered.</p>
+                             </div>
+                        </div>
+                    </div>
+                     <!-- Info Box -->
+                     <div id="infoBox" class="w-full p-4 bg-yellow-100 dark:bg-yellow-800/30 text-yellow-800 dark:text-yellow-300 rounded-lg text-sm text-center">
+                        <p>If probability is > 30%, a second AI model will identify potential areas of concern.</p>
+                     </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+    // --- DOM Element References ---
+    const imageUpload = document.getElementById('imageUpload');
+    const imagePreview = document.getElementById('imagePreview');
+    const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+    const previewText = document.getElementById('previewText');
+    const predictBtn = document.getElementById('predictBtn');
+
+    const resultsContainer = document.getElementById('resultsContainer');
+    const loader = document.getElementById('loader');
+    const loaderText = document.getElementById('loaderText');
+    const resultsPlaceholder = document.getElementById('resultsPlaceholder');
+    const errorMessage = document.getElementById('errorMessage');
+
+    const resultsContent = document.getElementById('resultsContent');
+    const probabilityContainer = document.getElementById('probabilityContainer');
+    const probabilityText = document.getElementById('probabilityText');
+    const annotatedImage = document.getElementById('annotatedImage');
+    const noDetectionText = document.getElementById('noDetectionText');
+    
+    // --- State Management ---
+    let isFileSelected = false;
+
+    // --- Utility Functions ---
+    const resetUI = () => {
+        resultsPlaceholder.classList.remove('hidden');
+        loader.classList.add('hidden');
+        loaderText.classList.add('hidden');
+        errorMessage.classList.add('hidden');
+        resultsContent.classList.add('hidden');
+        predictBtn.disabled = !isFileSelected;
+    };
+
+    const showLoading = (isLoading) => {
+        if (isLoading) {
+            resultsPlaceholder.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            resultsContent.classList.add('hidden');
+            loader.classList.remove('hidden');
+            loaderText.classList.remove('hidden');
+            predictBtn.disabled = true;
+        } else {
+            loader.classList.add('hidden');
+            loaderText.classList.add('hidden');
+            predictBtn.disabled = false;
+        }
+    };
+
+    const showError = (message) => {
+        showLoading(false);
+        resultsContent.classList.add('hidden');
+        errorMessage.textContent = `Error: ${message}`;
+        errorMessage.classList.remove('hidden');
+    };
+
+    const displayResults = (data) => {
+        showLoading(false);
+        resultsContent.classList.remove('hidden');
+        
+        // --- Display Probability ---
+        const probPercentage = (data.malignant_probability * 100).toFixed(2);
+        probabilityText.textContent = `Malignancy Probability: ${probPercentage}%`;
+
+        // Clear previous color classes
+        probabilityContainer.classList.remove('bg-green-100', 'dark:bg-green-900', 'text-green-800', 'dark:text-green-200', 'bg-red-100', 'dark:bg-red-900', 'text-red-800', 'dark:text-red-200');
+
+        // Dynamically set color based on threshold
+        if (data.malignant_probability > 0.3) {
+             probabilityContainer.classList.add('bg-red-100', 'dark:bg-red-900', 'text-red-800', 'dark:text-red-200');
+        } else {
+             probabilityContainer.classList.add('bg-green-100', 'dark:bg-green-900', 'text-green-800', 'dark:text-green-200');
+        }
+
+        // --- Display Annotated Image ---
+        if (data.detection_triggered && data.annotated_image_base64) {
+            annotatedImage.src = `data:image/jpeg;base64,${data.annotated_image_base64}`;
+            annotatedImage.classList.remove('hidden');
+            noDetectionText.classList.add('hidden');
+        } else {
+            annotatedImage.classList.add('hidden');
+            noDetectionText.classList.remove('hidden');
+        }
+    };
+    
+    // --- Event Listeners ---
+    
+    // Listen for file selection to show preview
+    imageUpload.addEventListener('change', () => {
+        const file = imageUpload.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                imagePreview.src = e.target.result;
+                imagePreview.classList.remove('hidden');
+                previewText.classList.add('hidden');
+            };
+            reader.readAsDataURL(file);
+            isFileSelected = true;
+            resetUI();
+        }
+    });
+
+    // Listen for predict button click
+    predictBtn.addEventListener('click', async () => {
+        const file = imageUpload.files[0];
+        if (!file) {
+            showError("Please select an image file first.");
+            return;
+        }
+
+        showLoading(true);
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/predict', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || `Request failed with status ${response.status}`);
+            }
+
+            displayResults(data);
+
+        } catch (error) {
+            console.error('Prediction failed:', error);
+            showError(error.message);
+        }
+    });
+    
+    // --- Initial State ---
+    resetUI();
+</script>
+
+</body>
+</html>
